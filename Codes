@@ -1,0 +1,440 @@
+#%matplotlib notebook
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as colors
+from matplotlib import animation
+import time
+import pickle
+import random
+import csv
+import math
+import requests
+import copy
+
+t0=time.time()
+t_start=copy.deepcopy(time.asctime(time.localtime(time.time()) ))
+Record=[]
+phi_space=np.linspace(0, 360, 181)
+theta_space=np.linspace(-180,180,181)
+Phi_space=np.linspace(-3.1415, 3.1415, 181)
+
+
+def Num_Genes(num_x,num_y):
+    return int(num_x*num_y)
+
+#Import gain data under different theta/phi in csv. form export from ANSYS HFSS
+def import_gain(file):
+    #--------->phi
+    Data=[]
+    data=[]
+    with open(file, newline='') as csvfile:
+        rows = csv.reader(csvfile)
+        row=list(rows)
+        for i in range(1,len(row)):
+            Data.append(float(row[i][2])**0.5)
+        data=np.reshape(np.array(Data),(181,181))
+    return data
+
+#Output a 1D list of array factor
+def AF(chromosome,theta,phi,wavelength,period_x,period_y,variation,num_x,num_y):
+    Random=[0]
+    u=0
+    while u < Num_Genes(num_x,num_y):
+        Random.append(random.random())
+        u+=1
+    first_x = -(period_x*(num_x-1))/2
+    first_y = -(period_y*(num_y-1))/2
+    px=first_x
+    py=first_y
+    AF_unit=0
+    Theta=(theta/360) * 2*3.1415
+    Phi=(phi/360) * 2*3.1415
+    if amp_array==True:
+        for i in range(num_y):
+            for j in range(num_x):
+                phase=np.exp(1j*(1-variation/2+variation*Random[(j*num_x)+(i+1)]))
+                x_term=np.exp(1j* (2*3.1415/wavelength) * (px+(j*period_x)) * (np.sin(Theta)*np.cos(Phi)))
+                y_term=np.exp(1j* (2*3.1415/wavelength) * (py+(i*period_y)) * (np.sin(Theta)*np.sin(Phi)))
+                AF_unit+=chromosome[(j*num_x)+(i+1)]*phase*x_term*y_term/(num_x*num_y)**0.5
+    else:
+        for i in range(num_y):
+            for j in range(num_x):
+                phase=np.exp(1j*chromosome[(j*num_x)+(i+1)]*(1-variation/2+variation*Random[(j*num_x)+(i+1)]))
+                x_term=np.exp(1j* (2*3.1415/wavelength) * (px+(j*period_x)) * (np.sin(Theta)*np.cos(Phi)))
+                y_term=np.exp(1j* (2*3.1415/wavelength) * (py+(i*period_y)) * (np.sin(Theta)*np.sin(Phi)))
+                AF_unit+=phase*x_term*y_term/(num_x*num_y)**0.5
+    return np.real(AF_unit)
+
+#gives the power magnitude under specific theta/phi, or give average power within +-3 degree gerion in strength_mode=="average"
+def strength(chromosome,theta,phi,strength_mode):
+    Theta_Order=int(theta/2)
+    Phi_Order=int(phi/2)
+    if strength_mode=="average":
+        Field=data[Theta_Order][Phi_Order]*AF(chromosome,theta,phi,wavelength,period_x,period_y,variation,num_x,num_y)
+        Ave=0
+        theta+=3
+        phi+=3        
+        Ave+=0.25*data[Theta_Order][Phi_Order]*AF(chromosome,theta,phi,wavelength,period_x,period_y,variation,num_x,num_y)
+        theta-=6
+        Ave+=0.25*data[Theta_Order][Phi_Order]*AF(chromosome,theta,phi,wavelength,period_x,period_y,variation,num_x,num_y)
+        phi-=6
+        Ave+=0.25*data[Theta_Order][Phi_Order]*AF(chromosome,theta,phi,wavelength,period_x,period_y,variation,num_x,num_y)
+        theta+=6
+        Ave+=0.25*data[Theta_Order][Phi_Order]*AF(chromosome,theta,phi,wavelength,period_x,period_y,variation,num_x,num_y)
+        theta-=6
+        phi+=6
+        field=Field/(1+Ave/Field)
+    
+    else:
+        field=data[Theta_Order][Phi_Order]*AF(chromosome,theta,phi,wavelength,period_x,period_y,variation,num_x,num_y)
+    return field**2
+
+# gives a 1D list of power at different theta/phi using specific chromosome(genes)
+def radiation(chromosome):
+    AF_lst=[]
+    for y in range(len(theta_space)):
+        for x in range(len(phi_space)):  
+            AF_lst.append(AF(chromosome,theta_space[y],phi_space[x],wavelength,period_x,period_y,variation,num_x,num_y))
+    AF_matrix=np.reshape(np.array(AF_lst),(181,181))
+    Field=np.multiply(data,AF_matrix)
+    Strength=np.multiply(Field,Field)
+    str0,str1,str2,str3,str4=np.split(Strength,[1,90,91,181],axis= 0)
+    strength= np.r_[str2,str3,str4,str1,str2]
+    return strength
+
+# gives a 2D PLOT of power distribution using specific chromosome(genes)
+def radiation_pattern(chromosome):
+    plt.figure(figsize=(10, 8))
+    ax = plt.subplot(111, polar=True)
+    CS=ax.contourf(Phi_space,theta_space,radiation(chromosome),cmap="magma")
+    plt.ylim([0,90])
+    cbar = plt.colorbar(CS)
+    cbar.set_label("Radiation Power (a.u.)")
+    label_position=ax.get_rlabel_position()
+    ax.tick_params(axis='y', colors='white', size=15)
+    plt.show() 
+
+# gives a 1D PLOT of power distribution at specific theta using specific chromosome(genes)
+def theta_slice(chromosome,theta):
+    Theta_Order=90+int(theta/2)
+    radiate=radiation(chromosome)
+    plt.plot(phi_space,radiate[Theta_Order])
+    plt.xlabel("Phi (degree)")
+    plt.ylabel("Power (a.u.)")
+    plt.show()
+    
+# gives a 1D PLOT of power distribution at specific phi using specific chromosome(genes)
+def phi_slice(chromosome,phi):
+    Phi_Order=int(phi/2)
+    radiate=radiation(chromosome)
+    plt.plot(theta_space,radiate[:,Phi_Order])
+    plt.xlabel("Theta (degree)")
+    plt.ylabel("Power (a.u.)")
+    plt.show()
+
+# Calculate and set the fitness value of one chromosome
+def get_fitness(chromosome):
+    chromosome[0]=np.round(strength(chromosome,theta,phi,strength_mode),0)
+    
+# Rearrange chromosome order in population (reverse=True, large fitness >> small fitness)
+def sort_fitness(pop):
+    pop.sort(key = lambda x: x[0],reverse=True)
+    return pop
+
+# Scanning all over phase combination under linear array assumption (dP,2dP,3dP,4dP,...)
+def spread_pop(num_x,num_y,Population_Size):
+    Spread_Pop=[]
+    Out_Pop=[]
+    if amp_array==True:
+        spacing_lstx=np.linspace(0,5,51)
+        spacing_lsty=np.linspace(0,5,51)
+        for u in range(2000):
+            gene=[0]
+    \        for i in range(num_x):
+                for j in range(num_y):
+                        gene.append(np.round(random.random()*5,2))
+            get_fitness(gene)
+            Spread_Pop.append(gene)
+    else:
+        spacing_lstx=np.linspace(-180,180,73)
+        spacing_lsty=np.linspace(-180,180,73)
+        Set=0
+        for u in range(len(spacing_lstx)):
+            for v in range(len(spacing_lsty)):
+                Set+=1
+                spacing_x=spacing_lstx[u]
+                spacing_y=spacing_lstx[v]
+                gene=[0]
+                for i in range(num_x):
+                    for j in range(num_y):
+                        gene.append(spacing_x*i+spacing_y*j)
+                get_fitness(gene)
+                Spread_Pop.append(gene)
+    sort_fitness(Spread_Pop)
+    for i in range(Population_Size):
+        Out_Pop.append(Spread_Pop[i])
+    return Out_Pop
+##-------------------Genetic Algorithm--------------------------
+
+def save_ga_record(pop):      
+    Record.append(pop)
+    file = open('GA Record', 'wb')
+    pickle.dump(Record, file)
+    file.close()
+    
+#CHROMESOME=[fitness, gene1, gene2,...]        
+#POPULATION= [chromosome1,chromosome2,...] = [[fitness1, gene1-1, gene1-2,...], [fitness2, gene2-1, gene2-2,...], ...]
+
+#Create a random chromosome
+def new_chromosome():
+    Self=[0]
+    i=0
+    if amp_array==True:
+        while i < Num_Genes(num_x,num_y):
+            Self.append(np.round(random.random()*5,2))
+            i+=1
+    else:    
+        while i < Num_Genes(num_x,num_y):
+            Self.append(int(random.random()*360))
+            i+=1
+    return Self
+
+#Set all phase to zero or excitation amplitude to 1 in amplitude array mode
+def zero():
+    Self=[0]
+    i=0
+    while i < Num_Genes(num_x,num_y):
+        if amp_array==True:
+            Self.append(1)
+        else:
+            Self.append(0)
+        i+=1
+    return Self
+
+#Create a population with random chromosome
+def new_population(size):
+    population=[]
+    for i in range(size):
+        new=new_chromosome()
+        get_fitness(new)
+        population.append(new)
+    sort_fitness(population)
+    return population
+
+# Calculate and set the fitness value for chromosomes in population
+def get_population_fitness(pop):
+    for i in range(Population_Size):
+        get_fitness(pop[i])
+    sort_fitness(pop)
+    return pop
+
+#randomly pick one good enough chromosome
+def select_tournament_population(pop):
+    tournament_pop = []
+    i=0
+    while i < Tournament_Selection_Size:
+        tournament_pop.append(pop[random.randrange(0,Population_Size)])
+        i+=1
+    sort_fitness(tournament_pop)
+    return tournament_pop
+
+#perform crossover to 2 chromosomes
+def crossover_chromosomes(chromosome1,chromosome2):
+    offspring=[0]
+    i=0
+    cut=int((Num_Genes(num_x,num_y))*random.random())
+    method=random.random()
+    #Cut and Paste
+    if 0.2<method<0.8:
+        while i < cut:
+            offspring.append(chromosome1[i+1])
+            i+=1
+        while Num_Genes(num_x,num_y)>i and i >=cut:
+            offspring.append(chromosome2[i+1])
+            i+=1
+    #Preserve 1
+    elif method>=0.8:
+        while i < Num_Genes(num_x,num_y):
+            offspring.append(chromosome1[i+1])
+            i+=1 
+    #Preserve 2
+    else:
+        while i < Num_Genes(num_x,num_y):
+            offspring.append(chromosome2[i+1])
+            i+=1
+    get_fitness(offspring)
+    return offspring
+
+#perform crossover to a population  
+def crossover_population(pop):
+    crossover_pop=[]
+    j=0
+    for i in range(Numb_of_Elite_Chromosomes):
+        crossover_pop.append(pop[i])
+    while j < Population_Size - Numb_of_Elite_Chromosomes:
+        chromosome1=select_tournament_population(pop)[0]
+        chromosome2=select_tournament_population(pop)[1]
+        crossover_pop.append(crossover_chromosomes(chromosome1,chromosome2))
+        j+=1
+    return crossover_pop
+
+#perform mutation to a chromosome
+def mutate_chromosome(chromosome):
+    for i in range(Num_Genes(num_x,num_y)):
+        if random.random() < Mutaton_Rate:
+            if amp_array==True:
+                if random.random() < 0.5:
+                    chromosome[i+1]+=np.round(random.random()*Mutation_Range,2)
+                    if chromosome[i+1]>5:
+                        chromosome[i+1]=5
+                else:
+                    chromosome[i+1]-=np.round(random.random()*Mutation_Range,2)
+                    if chromosome[i+1]<0:
+                        chromosome[i+1]=0
+            else:
+                if random.random() < 0.5:
+                    chromosome[i+1]+=int(random.random()*Mutation_Range)
+                else:
+                    chromosome[i+1]-=int(random.random()*Mutation_Range)
+
+#perform matation to all chromosomes in a population
+def mutate_population(pop):
+    mutate_pop=copy.deepcopy(pop)
+    for i in range (Numb_of_Elite_Chromosomes,Population_Size):
+        mutate_chromosome(mutate_pop[i])
+    return mutate_pop
+
+#Single genetic algorithm to a population
+def evolve(pop):
+    if Mutation == True and Crossover == False:
+        return get_population_fitness(mutate_population(pop))
+    elif Mutation == False and Crossover == True:
+        return get_population_fitness(crossover_population(pop))
+    else:
+        return get_population_fitness(mutate_population(crossover_population(pop)))
+    
+#Print information in a evolved population
+def print_population(pop,gen_number):
+    print("\n-----------------------------------------------------")
+    print("Time :",time.asctime(time.localtime(time.time())))
+    print("Last Generation #", gen_number, "Fitness:", pop[0][0])
+    fit_c=[]
+    for i in range(len(pop[0])-1):
+        fit_c.append(pop[0][i+1])
+    print("Fittest Chromosome :",fit_c)
+    print("Fitness:", pop[0][0])
+    print("-------------------------------------------------------")
+
+#perform assigned evolve generation to a population
+def ga_evolve(pop,recording):
+    Evolve=[]
+    rec=[]
+    rec.append([0,pop[0][0]])
+    generation_number=0
+    while generation_number<max_generation:
+        pop=evolve(pop)
+        generation_number+=1
+        save(pop)
+        if recording==True:
+            rec.append([generation_number,pop[0][0]])
+            if generation_number==max_generation:
+                Evolve.append(rec)
+        if generation_number == max_generation and Show_GA==True:
+            print_population(pop,generation_number)
+        same=[]
+        for i in range(Population_Size-1):
+            if pop[i]==pop[i+1]:
+                same.append(i+1)
+        for j in same:
+            mutate_chromosome(pop[int(j)])
+        get_population_fitness(pop)
+            
+    evolved_pop=copy.deepcopy(pop)
+    return evolved_pop
+
+#PLOT 1D graph of a array setting steering among a theta range under specific phi
+def steering_test(theta_min, theta_max, points,phi):
+    global theta
+    theta=theta_min
+    space=(theta_max-theta_min)/int(points-1)
+    i=0
+    plt.figure(figsize=(10, 8))
+    while i <int(points):
+        pop=spread_pop(num_x,num_y,Population_Size)
+        epop=ga_evolve(pop,True)
+        rad=radiation(epop[0])
+        Phi_Order=int(90/2)
+        plt.plot(theta_space,rad[:,Phi_Order],label="Scanning @ "+str(-theta)+" deg")
+        theta+=space
+        i+=1
+    plt.title("GA, Period:"+str(np.round((period_x*1000000),0))+"&"+str(np.round((period_y*1000000),0))+" um")
+    plt.xlabel("Theta (degree)")
+    plt.ylabel("Power (a.u.)")
+    plt.legend()
+    plt.show()
+
+# [BONUS] Line Noticfication
+#See "https://bustlec.github.io/note/2018/07/10/line-notify-using-python/"
+message = "Your simulation starts at ",t_start," has finished, go and check the results!"
+token = 'dSpsho4KcksKWUCvtIrnAuq3qcEaqPzqxMGE1MayBis'
+
+def line(token, msg):
+    headers = {
+        "Authorization": "Bearer " + token, 
+        "Content-Type" : "application/x-www-form-urlencoded"}
+    payload = {'message': msg}
+    r = requests.post("https://notify-api.line.me/api/notify", headers = headers, params = payload)
+
+#####################################
+#Radiation Pattern CSV Name
+file='Gain-Plot-3.csv'
+data=import_gain(file)
+
+#EM wave wavelength
+wavelength=461*(10**-6)
+#Array element periods
+period_x = 250*(10**-6)
+period_y = 250*(10**-6)
+#Array element numbers
+num_x=3
+num_y=3
+#variation of phase shifting ability (0.1 >> -5%to+5%)
+variation=0
+
+#GA Setting
+
+#Number of chromosome in a population
+Population_Size=7
+#evolving generation
+max_generation=200
+#Perform crossover or not
+Crossover= True
+#number of preseved good chromosomes during evolution
+Numb_of_Elite_Chromosomes=2
+#number of preseved good enough chromosomes that can perform crossover
+Tournament_Selection_Size=5
+#Perform mutation or not
+Mutation=True
+#Probability of mutation happening
+Mutaton_Rate=0.01
+#Maximum gene variation under mutation (phase->recommend 20deg, amp->recommend 1)
+Mutation_Range=1 
+#Whether print out the result data after finish whole evolution
+Show_GA=True
+
+#Optimazation Setting
+#the theta/phi you want to optimize
+theta=20
+phi=90
+#"average"=average mode
+#  other = single point mode
+strength_mode="average"
+#change to modifying amplitude of elements instead of phase
+amp_array=True
+#####################################
+
+pop=spread_pop(num_x,num_y,Population_Size)
+print(pop)
+epop=ga_evolve(pop,True)
+print(epop)
+radiation_pattern(epop[0])
